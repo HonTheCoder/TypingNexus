@@ -11,7 +11,7 @@ import VirtualKeyboard from './VirtualKeyboard'
 import { useTypingEngine } from '../../hooks/useTypingEngine'
 import { useHaptics } from '../../hooks/useHaptics'
 import { fetchText } from '../../services/textProvider'
-import { useSfx } from '../../hooks/useAudio'
+import { useSfx, useBGM } from '../../hooks/useAudio'
 import { useGameStore, timeLabel } from '../../store/useGameStore'
 
 /* ── WORDS MODE ──────────────────────────────────────────────────────────────*/
@@ -109,6 +109,7 @@ export default function TypingGame() {
   const { mode, category, difficulty, timeLimit, setScene } = useGameStore()
   const sfx = useSfx()
   const haptics = useHaptics()
+  useBGM('game')   // plays start.mp3, stops on unmount
 
   const [words, setWords] = useState([])
   const [loading, setLoading] = useState(true)

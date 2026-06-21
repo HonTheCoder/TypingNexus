@@ -1,223 +1,280 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // components/leaderboard/Leaderboard.jsx
-// – Top 10 only (enforced both server-side via limit(10) and client-side slice)
-// – Scores NOT in top 10 are still saved but never displayed here
-// – Mistakes column always visible, pink when > 0
-// – Full mobile-responsive layout
+// Two tabs: TYPING (filtered by category/difficulty/time) and UFO (global top 10)
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { RefreshCw, Medal } from 'lucide-react'
+import { RefreshCw, Medal, Crosshair, Zap } from 'lucide-react'
 import Backdrop3D from '../three/Backdrop3D'
-import { fetchTopScores } from '../../firebase/leaderboard'
+import { fetchTopScores, fetchUfoScores } from '../../firebase/leaderboard'
 import { useGameStore, CATEGORIES, DIFFICULTIES, TIME_LIMITS, timeLabel } from '../../store/useGameStore'
 import { useSfx } from '../../hooks/useAudio'
 import { useHaptics } from '../../hooks/useHaptics'
 
 const TOP_N     = 10
 const CACHE_TTL = 30_000
+const WAVE_LABEL = { early: 'Wave 1', mid: 'Wave 2', late: 'Wave 3' }
 
-// Rank medal colours
-const RANK_STYLE = [
-  'text-yellow-300 drop-shadow-[0_0_6px_rgba(250,204,21,0.6)]',  // 1st
-  'text-slate-300  drop-shadow-[0_0_4px_rgba(203,213,225,0.5)]', // 2nd
-  'text-amber-600  drop-shadow-[0_0_4px_rgba(180,83,9,0.5)]',    // 3rd
-]
-const rankStyle = (i) => RANK_STYLE[i] ?? 'text-slate-400'
+// Rank colours: gold / silver / bronze / rest
+const rankCls = (i) => [
+  'text-yellow-300 drop-shadow-[0_0_6px_rgba(250,204,21,0.5)]',
+  'text-slate-300',
+  'text-amber-600',
+][i] ?? 'text-slate-500'
 
 export default function Leaderboard() {
   const setScene = useGameStore(s => s.setScene)
   const sfx      = useSfx()
   const haptics  = useHaptics()
 
+  // Which leaderboard tab is active
+  const [boardMode,  setBoardMode]  = useState('typing')  // 'typing' | 'ufo'
+
+  // Typing filters
   const [category,   setCategory]   = useState('words')
   const [difficulty, setDifficulty] = useState('easy')
   const [timeLimit,  setTimeLimit]  = useState(60)
-  const [rows,       setRows]       = useState(null)   // null = loading
-  const [failed,     setFailed]     = useState(false)
-  const [errorMsg,   setErrorMsg]   = useState('')
+
+  // Data
+  const [rows,   setRows]   = useState(null)
+  const [failed, setFailed] = useState(false)
+  const [errMsg, setErrMsg] = useState('')
   const cache = useRef(new Map())
 
-  const load = useCallback(async (forceRefresh = false) => {
-    const key    = `${category}|${difficulty}|${timeLimit}`
+  const load = useCallback(async (force = false) => {
+    const key = boardMode === 'ufo'
+      ? 'ufo'
+      : `${category}|${difficulty}|${timeLimit}`
+
     const cached = cache.current.get(key)
-    if (!forceRefresh && cached && Date.now() - cached.at < CACHE_TTL) {
-      setRows(cached.data); setFailed(false); setErrorMsg(''); return
+    if (!force && cached && Date.now() - cached.at < CACHE_TTL) {
+      setRows(cached.data); setFailed(false); setErrMsg(''); return
     }
-    setRows(null); setFailed(false); setErrorMsg('')
+    setRows(null); setFailed(false); setErrMsg('')
     try {
-      // fetchTopScores already passes limit(10) to Firestore
-      const data = await fetchTopScores(category, difficulty, timeLimit, TOP_N)
-      // Client-side guard: never show more than TOP_N regardless of mock/cache
-      const top  = data.slice(0, TOP_N)
+      const data = boardMode === 'ufo'
+        ? await fetchUfoScores(TOP_N)
+        : await fetchTopScores(category, difficulty, timeLimit, TOP_N)
+      const top = data.slice(0, TOP_N)
       cache.current.set(key, { data: top, at: Date.now() })
       setRows(top)
     } catch (err) {
-      console.error('Leaderboard fetch failed:', err)
-      setErrorMsg(err.userMessage ?? err.message ?? 'Unknown error')
-      setFailed(true)
-      setRows([])
+      setErrMsg(err.userMessage ?? err.message ?? 'Unknown error')
+      setFailed(true); setRows([])
     }
-  }, [category, difficulty, timeLimit])
+  }, [boardMode, category, difficulty, timeLimit])
 
   useEffect(() => { load() }, [load])
 
-  const Tab = ({ active, onClick, children }) => (
+  // ── Tab button ──────────────────────────────────────────────────────────────
+  const ModeTab = ({ id, icon: Icon, label }) => (
+    <button
+      onClick={() => { sfx.click(); haptics.tap(); setBoardMode(id) }}
+      className={`flex items-center gap-2 px-4 py-2 rounded-lg font-display text-xs tracking-widest uppercase transition-all duration-300 active:scale-95
+        ${boardMode === id
+          ? id === 'ufo'
+            ? 'bg-fuchsia-500 text-slate-950 shadow-[0_0_14px_rgba(217,70,239,0.7)]'
+            : 'bg-cyan-500 text-slate-950 shadow-[0_0_14px_rgba(6,182,212,0.7)]'
+          : 'border border-slate-600 text-slate-400 hover:border-slate-400 hover:text-slate-200'
+        }`}
+    >
+      <Icon size={12} />
+      {label}
+    </button>
+  )
+
+  // ── Filter pill ─────────────────────────────────────────────────────────────
+  const Pill = ({ active, onClick, children }) => (
     <button
       onClick={() => { sfx.click(); haptics.tap(); onClick() }}
-      className={`px-3 py-1.5 rounded-lg text-[10px] sm:text-xs font-display tracking-widest uppercase transition-all duration-300 active:scale-95
+      className={`px-3 py-1 rounded-md font-display text-[10px] tracking-widest uppercase transition-all duration-300 active:scale-95
         ${active
-          ? 'bg-cyan-500 text-slate-950 shadow-[0_0_12px_rgba(6,182,212,0.7)]'
-          : 'text-cyan-400/60 border border-cyan-500/30 hover:border-cyan-400 hover:text-cyan-300 hover:bg-cyan-500/10'
+          ? 'bg-cyan-500/20 border border-cyan-400 text-cyan-300'
+          : 'border border-slate-700/50 text-slate-500 hover:border-slate-500 hover:text-slate-400'
         }`}
     >
       {children}
     </button>
   )
 
+  // ── Typing leaderboard table ────────────────────────────────────────────────
+  const TypingTable = () => (
+    <>
+      {/* Column headers */}
+      <div className="grid items-center gap-x-2 pb-2 border-b border-slate-700/40 text-[9px] tracking-[0.2em] text-slate-600 uppercase"
+        style={{ gridTemplateColumns: '18px 1fr 46px 46px 38px' }}>
+        <span>#</span>
+        <span>Pilot</span>
+        <span className="text-right">WPM</span>
+        <span className="text-right">Acc</span>
+        <span className="text-right text-pink-400/50">Err</span>
+      </div>
+
+      {/* Rows */}
+      <div className="divide-y divide-slate-800/50">
+        {rows.map((r, i) => (
+          <div key={r.id}
+            className={`grid items-center gap-x-2 py-2.5 ${i < 3 ? 'bg-slate-800/20 rounded-lg px-1 -mx-1' : ''}`}
+            style={{ gridTemplateColumns: '18px 1fr 46px 46px 38px' }}>
+            <span className={`font-display text-sm font-bold ${rankCls(i)}`}>{i + 1}</span>
+            <span className={`font-display text-sm tracking-wide truncate ${rankCls(i)}`}>{r.name}</span>
+            <span className={`font-display text-sm font-bold text-right ${rankCls(i)}`}>{r.wpm}</span>
+            <span className="text-xs text-right text-slate-400 tabular-nums">{r.accuracy}%</span>
+            <span className={`font-display text-xs text-right tabular-nums
+              ${(r.mistakes ?? 0) > 0 ? 'text-pink-400' : 'text-slate-700'}`}>
+              {r.mistakes != null ? r.mistakes : '—'}
+            </span>
+          </div>
+        ))}
+      </div>
+    </>
+  )
+
+  // ── UFO leaderboard table ───────────────────────────────────────────────────
+  const UfoTable = () => (
+    <>
+      <div className="grid items-center gap-x-2 pb-2 border-b border-slate-700/40 text-[9px] tracking-[0.2em] text-slate-600 uppercase"
+        style={{ gridTemplateColumns: '18px 1fr 64px 56px 48px' }}>
+        <span>#</span>
+        <span>Pilot</span>
+        <span className="text-right">Score</span>
+        <span className="text-right">Wave</span>
+        <span className="text-right">Time</span>
+      </div>
+
+      <div className="divide-y divide-slate-800/50">
+        {rows.map((r, i) => (
+          <div key={r.id}
+            className={`grid items-center gap-x-2 py-2.5 ${i < 3 ? 'bg-slate-800/20 rounded-lg px-1 -mx-1' : ''}`}
+            style={{ gridTemplateColumns: '18px 1fr 64px 56px 48px' }}>
+            <span className={`font-display text-sm font-bold ${rankCls(i)}`}>{i + 1}</span>
+            <span className={`font-display text-sm tracking-wide truncate ${rankCls(i)}`}>{r.name}</span>
+            <span className={`font-display text-sm font-bold text-right ${rankCls(i)}`}>{r.score}</span>
+            <span className="text-[10px] text-right text-fuchsia-400 tabular-nums">
+              {WAVE_LABEL[r.wave] ?? r.wave}
+            </span>
+            <span className="text-[10px] text-right text-slate-400 tabular-nums">
+              {r.elapsed}s
+            </span>
+          </div>
+        ))}
+      </div>
+    </>
+  )
+
   return (
     <div className="absolute inset-0 w-full h-full overflow-hidden">
       <Backdrop3D />
 
-      {/* Ambient glow */}
       <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
-        <div className="w-[500px] h-[500px] rounded-full bg-yellow-500/8 blur-[140px]" />
+        <div className="w-[500px] h-[500px] rounded-full bg-yellow-500/6 blur-[160px]" />
       </div>
 
-      {/* Scrollable content */}
       <div className="absolute inset-0 z-10 overflow-y-auto">
         <div className="min-h-full flex items-start justify-center px-3 py-4 sm:py-8">
-          <div className="w-full max-w-lg bg-slate-900/65 backdrop-blur-md border border-yellow-500/20 rounded-xl shadow-[0_0_40px_rgba(250,204,21,0.12)] animate-fade-up overflow-hidden">
+          <div className="w-full max-w-lg bg-slate-900/65 backdrop-blur-md border border-yellow-500/20 rounded-xl shadow-[0_0_40px_rgba(250,204,21,0.10)] animate-fade-up overflow-hidden">
 
-            {/* ── Header ────────────────────────────────────────────────── */}
+            {/* ── Header ──────────────────────────────────────────────────── */}
             <div className="px-4 sm:px-6 pt-5 pb-4 border-b border-slate-700/40">
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-2">
-                  <Medal size={18} className="text-yellow-300" />
-                  <h2 className="font-display font-bold text-lg sm:text-2xl uppercase tracking-[0.2em] text-yellow-300 neon-text">
+                  <Medal size={16} className="text-yellow-300 shrink-0" />
+                  <h2 className="font-display font-bold text-lg sm:text-xl uppercase tracking-[0.2em] text-yellow-300 neon-text">
                     World Records
                   </h2>
                 </div>
-                <button
-                  onClick={() => { sfx.click(); haptics.tap(); load(true) }}
-                  title="Refresh"
-                  className="p-2 rounded-lg border border-yellow-500/30 text-yellow-300/60 hover:text-yellow-300 hover:border-yellow-400 transition-all duration-300 active:scale-95"
-                >
-                  <RefreshCw size={13} />
+                <button onClick={() => { sfx.click(); haptics.tap(); load(true) }}
+                  className="p-1.5 rounded-lg border border-yellow-500/25 text-yellow-300/50 hover:text-yellow-300 hover:border-yellow-400 transition-all duration-300 active:scale-95">
+                  <RefreshCw size={12} />
                 </button>
               </div>
-              <p className="text-slate-500 text-[9px] tracking-[0.3em] uppercase mt-1">
-                Top {TOP_N} pilots per configuration
-              </p>
-            </div>
 
-            {/* ── Filters ───────────────────────────────────────────────── */}
-            <div className="px-4 sm:px-6 py-4 space-y-2.5 border-b border-slate-700/40">
-              <div className="flex flex-wrap gap-1.5">
-                {CATEGORIES.map(c => (
-                  <Tab key={c} active={c === category} onClick={() => setCategory(c)}>{c}</Tab>
-                ))}
-              </div>
-              <div className="flex flex-wrap gap-1.5">
-                {DIFFICULTIES.map(d => (
-                  <Tab key={d} active={d === difficulty} onClick={() => setDifficulty(d)}>{d}</Tab>
-                ))}
-              </div>
-              <div className="flex flex-wrap gap-1.5">
-                {TIME_LIMITS.map(t => (
-                  <Tab key={t} active={t === timeLimit} onClick={() => setTimeLimit(t)}>{timeLabel(t)}</Tab>
-                ))}
+              {/* Mode tabs */}
+              <div className="flex gap-2 mt-4">
+                <ModeTab id="typing" icon={Crosshair} label="Typing" />
+                <ModeTab id="ufo"    icon={Zap}       label="UFO Mode" />
               </div>
             </div>
 
-            {/* ── Table / states ────────────────────────────────────────── */}
+            {/* ── Typing filters (hidden in UFO tab) ──────────────────────── */}
+            {boardMode === 'typing' && (
+              <div className="px-4 sm:px-6 py-4 space-y-2 border-b border-slate-700/40">
+                {/* Category */}
+                <div>
+                  <p className="text-[8px] tracking-[0.3em] text-slate-600 uppercase mb-1.5">Text Type</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {CATEGORIES.map(c => (
+                      <Pill key={c} active={c === category} onClick={() => setCategory(c)}>{c}</Pill>
+                    ))}
+                  </div>
+                </div>
+                {/* Difficulty */}
+                <div>
+                  <p className="text-[8px] tracking-[0.3em] text-slate-600 uppercase mb-1.5">Difficulty</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {DIFFICULTIES.map(d => (
+                      <Pill key={d} active={d === difficulty} onClick={() => setDifficulty(d)}>{d}</Pill>
+                    ))}
+                  </div>
+                </div>
+                {/* Time */}
+                <div>
+                  <p className="text-[8px] tracking-[0.3em] text-slate-600 uppercase mb-1.5">Time Limit</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {TIME_LIMITS.map(t => (
+                      <Pill key={t} active={t === timeLimit} onClick={() => setTimeLimit(t)}>{timeLabel(t)}</Pill>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ── UFO tab sub-header ───────────────────────────────────────── */}
+            {boardMode === 'ufo' && (
+              <div className="px-4 sm:px-6 py-3 border-b border-slate-700/40">
+                <p className="text-[9px] tracking-[0.3em] text-fuchsia-400/60 uppercase">
+                  Global top {TOP_N} — ranked by score
+                </p>
+              </div>
+            )}
+
+            {/* ── Table area ──────────────────────────────────────────────── */}
             <div className="px-4 sm:px-6 py-4">
               {rows === null ? (
-                <div className="py-12 text-center">
-                  <p className="text-cyan-400/50 animate-pulse tracking-[0.35em] text-xs font-display">
+                <div className="py-10 text-center">
+                  <p className="text-cyan-400/40 animate-pulse tracking-[0.35em] text-xs font-display">
                     SYNCING WITH THE GRID...
                   </p>
                 </div>
               ) : failed ? (
-                <div className="py-12 text-center space-y-3">
+                <div className="py-10 text-center space-y-2">
                   <p className="text-red-400 tracking-[0.3em] font-display text-sm">UPLINK FAILED</p>
-                  <p className="text-red-400/60 text-xs leading-relaxed max-w-xs mx-auto">{errorMsg}</p>
+                  <p className="text-red-400/50 text-xs leading-relaxed max-w-xs mx-auto">{errMsg}</p>
                 </div>
               ) : rows.length === 0 ? (
-                <div className="py-12 text-center">
+                <div className="py-10 text-center">
                   <p className="text-slate-500 tracking-[0.3em] text-xs">NO RECORDS YET</p>
-                  <p className="text-slate-600 tracking-[0.2em] text-[10px] mt-2">BE THE FIRST PILOT ON THE GRID</p>
+                  <p className="text-slate-600 tracking-[0.2em] text-[10px] mt-1">BE THE FIRST PILOT ON THE GRID</p>
                 </div>
               ) : (
                 <>
-                  {/* Column headers */}
-                  <div className="grid grid-cols-[20px_1fr_52px_52px_44px] gap-x-2 pb-2 mb-1 border-b border-slate-700/40">
-                    <span className="text-[9px] tracking-[0.2em] text-slate-600 uppercase">#</span>
-                    <span className="text-[9px] tracking-[0.2em] text-slate-600 uppercase">Pilot</span>
-                    <span className="text-[9px] tracking-[0.2em] text-slate-600 uppercase text-right">WPM</span>
-                    <span className="text-[9px] tracking-[0.2em] text-slate-600 uppercase text-right">Acc</span>
-                    <span className="text-[9px] tracking-[0.2em] text-pink-400/50 uppercase text-right">Err</span>
-                  </div>
-
-                  {/* Rows */}
-                  <div className="space-y-0.5">
-                    {rows.map((r, i) => (
-                      <div
-                        key={r.id}
-                        className={`grid grid-cols-[20px_1fr_52px_52px_44px] gap-x-2 items-center py-2.5
-                          border-b border-slate-800/60 last:border-0
-                          ${i < 3 ? 'bg-slate-800/20 rounded-lg px-1 -mx-1' : ''}`}
-                      >
-                        {/* Rank */}
-                        <span className={`font-display text-sm font-bold ${rankStyle(i)}`}>
-                          {i + 1}
-                        </span>
-
-                        {/* Name */}
-                        <span className={`font-display text-sm tracking-wider truncate ${rankStyle(i)}`}>
-                          {r.name}
-                        </span>
-
-                        {/* WPM */}
-                        <span className={`font-display text-sm font-bold text-right ${rankStyle(i)}`}>
-                          {r.wpm}
-                        </span>
-
-                        {/* Accuracy */}
-                        <span className="text-xs text-right text-slate-400 tabular-nums">
-                          {r.accuracy}%
-                        </span>
-
-                        {/* Mistakes — pink when > 0, dim dash when absent */}
-                        <span className={`font-display text-xs text-right tabular-nums
-                          ${(r.mistakes ?? 0) > 0
-                            ? 'text-pink-400 drop-shadow-[0_0_4px_rgba(236,72,153,0.5)]'
-                            : 'text-slate-600'
-                          }`}>
-                          {r.mistakes != null ? r.mistakes : '—'}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-
-                  {/* Footer note */}
-                  <p className="text-slate-600 text-[9px] tracking-[0.2em] uppercase mt-4 text-center">
-                    Only the top {TOP_N} scores per mode are shown
+                  {boardMode === 'typing' ? <TypingTable /> : <UfoTable />}
+                  <p className="text-slate-700 text-[9px] tracking-[0.2em] uppercase mt-4 text-center">
+                    Showing top {rows.length} of {TOP_N} max
                   </p>
                 </>
               )}
             </div>
 
-            {/* ── Back button ───────────────────────────────────────────── */}
+            {/* ── Back ────────────────────────────────────────────────────── */}
             <div className="px-4 sm:px-6 pb-5 pt-1">
               <button
                 onClick={() => { sfx.click(); haptics.tap(); setScene('menu') }}
-                className="w-full py-3 rounded-lg border border-slate-700/50 text-slate-500 hover:text-fuchsia-400 hover:border-fuchsia-500/40 text-[10px] tracking-[0.35em] uppercase transition-all duration-300 active:scale-95"
+                className="w-full py-2.5 rounded-lg border border-slate-700/50 text-slate-500 hover:text-fuchsia-400 hover:border-fuchsia-500/40 text-[10px] tracking-[0.35em] uppercase transition-all duration-300 active:scale-95"
               >
                 ← Back to Menu
               </button>
             </div>
-
           </div>
         </div>
       </div>

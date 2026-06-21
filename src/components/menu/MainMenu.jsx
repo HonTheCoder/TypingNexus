@@ -7,7 +7,7 @@ import { Canvas, useFrame } from '@react-three/fiber'
 import { Stars } from '@react-three/drei'
 import ParticleGrid from '../three/ParticleGrid'
 import { useGameStore } from '../../store/useGameStore'
-import { useSfx } from '../../hooks/useAudio'
+import { useSfx, useBGM } from '../../hooks/useAudio'
 import { useHaptics } from '../../hooks/useHaptics'
 
 function HoverShape({ position, color, geometry }) {
@@ -75,6 +75,7 @@ function MenuButton({ title, subtitle, accent, onClick }) {
 export default function MainMenu() {
   const { startSetup, setScene } = useGameStore()
   const sfx = useSfx()
+  useBGM('menu')   // plays mainmenu.mp3, stops when scene changes
   const go  = (fn) => () => { sfx.click(); fn() }
 
   return (
