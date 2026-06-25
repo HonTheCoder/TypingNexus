@@ -5,7 +5,7 @@ import * as THREE from 'three'
 import { Heart, Trophy, X, Zap } from 'lucide-react'
 import { fetchUfoWordBank } from '../../services/textProvider'
 import { saveUfoScore } from '../../firebase/leaderboard'
-import { useSfx, useBGM } from '../../hooks/useAudio'
+import { useSfx } from '../../hooks/useAudio'
 import { useHaptics } from '../../hooks/useHaptics'
 import { useGameStore } from '../../store/useGameStore'
 import ConfirmModal from '../game/ConfirmModal'
@@ -218,16 +218,39 @@ const UFO_ROWS = [
 ]
 const FLASH_MS = 120
 
+// UfoKey uses a ref + native addEventListener({ passive: false }) so that
+// e.preventDefault() is valid and suppresses the ghost click after touchstart.
+// React's synthetic onTouchStart is always passive in React 17+ and cannot
+// call preventDefault(), so we bypass it entirely for touch.
 function UfoKey({ k, onTap }) {
   const [flash, setFlash] = useState(false)
-  const fire = (e) => {
-    e.preventDefault()
-    setFlash(true); setTimeout(() => setFlash(false), FLASH_MS)
+  const btnRef = useRef()
+
+  useEffect(() => {
+    const el = btnRef.current
+    if (!el) return
+    const handler = (e) => {
+      e.preventDefault()          // now valid — listener is non-passive
+      setFlash(true)
+      setTimeout(() => setFlash(false), FLASH_MS)
+      onTap(k)
+    }
+    el.addEventListener('touchstart', handler, { passive: false })
+    return () => el.removeEventListener('touchstart', handler)
+  }, [k, onTap])
+
+  // onClick handles mouse / pointer devices (desktop emulator, etc.)
+  const handleClick = () => {
+    setFlash(true)
+    setTimeout(() => setFlash(false), FLASH_MS)
     onTap(k)
   }
+
   return (
     <button
-      onTouchStart={fire} onClick={fire} tabIndex={-1}
+      ref={btnRef}
+      onClick={handleClick}
+      tabIndex={-1}
       className={`relative flex-1 h-9 rounded-md border font-display text-[11px] font-bold uppercase
         transition-all duration-75 active:scale-95 select-none
         ${flash
@@ -240,9 +263,32 @@ function UfoKey({ k, onTap }) {
   )
 }
 
+// Backspace key with the same non-passive native touch listener
+function UfoBackspaceKey({ onTap }) {
+  const btnRef = useRef()
+
+  useEffect(() => {
+    const el = btnRef.current
+    if (!el) return
+    const handler = (e) => { e.preventDefault(); onTap('Backspace') }
+    el.addEventListener('touchstart', handler, { passive: false })
+    return () => el.removeEventListener('touchstart', handler)
+  }, [onTap])
+
+  return (
+    <button
+      ref={btnRef}
+      onClick={() => onTap('Backspace')}
+      tabIndex={-1}
+      className="w-[14%] h-9 rounded-md border bg-rose-900/40 border-rose-500/30 text-rose-400 font-display text-[10px] select-none active:scale-95"
+    >⌫</button>
+  )
+}
+
 function UfoVirtualKeyboard({ onTap }) {
   const haptics = useHaptics()
-  const h = (k) => { haptics.tap(); onTap(k) }
+  const h = useCallback((k) => { haptics.tap(); onTap(k) }, [haptics, onTap])
+
   return (
     <div className="md:hidden w-full px-1 pb-2 pt-1 bg-slate-950/90 backdrop-blur-md border-t border-purple-500/20 shrink-0">
       <div className="flex gap-[3px] mb-[3px]">
@@ -252,12 +298,7 @@ function UfoVirtualKeyboard({ onTap }) {
         {UFO_ROWS[1].map(k => <UfoKey key={k} k={k} onTap={h} />)}
       </div>
       <div className="flex gap-[3px]">
-        <button
-          onTouchStart={(e) => { e.preventDefault(); h('Backspace') }}
-          onClick={() => h('Backspace')}
-          tabIndex={-1}
-          className="w-[14%] h-9 rounded-md border bg-rose-900/40 border-rose-500/30 text-rose-400 font-display text-[10px] select-none active:scale-95"
-        >⌫</button>
+        <UfoBackspaceKey onTap={h} />
         <div className="flex gap-[3px] flex-1">
           {UFO_ROWS[2].map(k => <UfoKey key={k} k={k} onTap={h} />)}
         </div>
@@ -322,7 +363,6 @@ export default function UfoMode() {
   const setScene = useGameStore(s => s.setScene)
   const sfx      = useSfx()
   const haptics  = useHaptics()
-  useBGM('ufo')   // plays ufo.mp3, stops on unmount
   const [bank,        setBank]        = useState(null)
   const [ufos,        setUfos]        = useState([])
   const [typed,       setTyped]       = useState('')

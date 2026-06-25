@@ -60,9 +60,12 @@ function ThreeCanvas({ onContextLost }) {
       camera={{ position: [0, 1.5, 10], fov: 55 }}
       frameloop="always"
       gl={{
-        powerPreference:              'default',
+        powerPreference:              'high-performance', // dedicated GPU path, less likely to lose context
         failIfMajorPerformanceCaveat: false,
-        antialias:                    false,   // reduces VRAM pressure
+        antialias:                    false,   // reduces VRAM pressure on mobile
+        alpha:                        false,   // opaque canvas — saves memory
+        depth:                        true,
+        stencil:                      false,   // not needed — saves GPU memory
       }}
       onCreated={({ gl }) => {
         const canvas = gl.domElement
@@ -79,9 +82,9 @@ function ThreeCanvas({ onContextLost }) {
           // Give the browser/driver 2 s to restore the context naturally.
           // If it hasn't restored by then, force a full React remount.
           recoveryTimer = setTimeout(() => {
-            console.warn('[Backdrop3D] context not restored after 2 s — forcing remount')
+            console.warn('[Backdrop3D] context not restored after 1 s — forcing remount')
             onContextLost()
-          }, 2000)
+          }, 1000)
         }, false)
 
         canvas.addEventListener('webglcontextrestored', () => {
